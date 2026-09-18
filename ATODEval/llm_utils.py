@@ -6,26 +6,28 @@
 """
 LLM Utilities for ATODEval
 
-Provides a unified interface for LLM calls across all metric evaluation scripts.
-Uses the simple LLMClient for Bedrock integration with backward compatibility.
+Provides a unified interface for model calls across metric evaluation scripts.
 """
 
 import json
+import os
 import re
-from typing import Optional
-from pathlib import Path
-import sys
-
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-# Embedded LLM client implementation
 from typing import Dict, Optional
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 import time
 import random
+
+
+def resolve_model_id(model_id: Optional[str] = None) -> str:
+    """Resolve a model ID from an argument or the ATOD_MODEL_ID environment variable."""
+    resolved = model_id or os.environ.get("ATOD_MODEL_ID")
+    if not resolved:
+        raise ValueError(
+            "No model ID configured. Pass --model-id or set ATOD_MODEL_ID."
+        )
+    return resolved
 
 
 def wait_for_rate_limit():
@@ -84,21 +86,32 @@ def extract_json_from_llm_response(response: str) -> str:
 
 
 class LLMClient:
-    """Simple LLM client for AWS Bedrock Claude API calls."""
+    """Simple client for model calls through the Bedrock runtime."""
 
-    def __init__(self, model_id="us.anthropic.claude-sonnet-4-20250514-v1:0"):
+    def __init__(self, model_id: Optional[str] = None):
         """Initialize the LLM client.
 
         Args:
-            model_id: AWS Bedrock model identifier
+            model_id: Bedrock model identifier. Defaults to ATOD_MODEL_ID.
         """
+        self.model_id = resolve_model_id(model_id)
         config = Config(
             retries={'max_attempts': 10, 'mode': 'adaptive'},
             read_timeout=150,
             connect_timeout=150
         )
-        self.bedrock = boto3.client(service_name='bedrock-runtime', config=config)
-        self.model_id = model_id
+        region = (
+            os.environ.get("BEDROCK_REGION")
+            or os.environ.get("AWS_REGION")
+            or os.environ.get("AWS_DEFAULT_REGION")
+        )
+        client_options = {
+            "service_name": "bedrock-runtime",
+            "config": config,
+        }
+        if region:
+            client_options["region_name"] = region
+        self.bedrock = boto3.client(**client_options)
 
     def call(self, prompt, max_tokens=4096, temperature=0.5, max_retries=3):
         """Make a simple LLM API call with rate limiting and exponential backoff.
@@ -159,12 +172,12 @@ class LLMController:
     This maintains the existing interface while using the simpler LLM client internally."""
 
     def __init__(self, backend: str = "bedrock",
-                 model_id: str = "us.anthropic.claude-sonnet-4-20250514-v1:0"):
+                 model_id: Optional[str] = None):
         """Initialize LLM controller.
 
         Args:
             backend: LLM backend (only "bedrock" supported)
-            model_id: Model identifier
+            model_id: Model identifier. Defaults to ATOD_MODEL_ID.
         """
         if backend != "bedrock":
             print(f"Warning: Backend '{backend}' not supported. Using Bedrock instead.")
@@ -196,7 +209,11 @@ class LLMController:
         return response
 
 
-def evaluate_with_llm_judge(prompt: str, model_id: str = "us.anthropic.claude-sonnet-4-20250514-v1:0", verbose: bool = False) -> float:
+def evaluate_with_llm_judge(
+    prompt: str,
+    model_id: Optional[str] = None,
+    verbose: bool = False,
+) -> float:
     """
     Evaluate using LLM judge. Returns a score between 0.0 and 1.0.
 
@@ -229,7 +246,11 @@ def evaluate_with_llm_judge(prompt: str, model_id: str = "us.anthropic.claude-so
         raise ValueError(f"Could not extract numeric score from LLM response: {response}")
 
 
-def evaluate_yes_no_with_llm(prompt: str, model_id: str = "us.anthropic.claude-sonnet-4-20250514-v1:0", verbose: bool = False) -> bool:
+def evaluate_yes_no_with_llm(
+    prompt: str,
+    model_id: Optional[str] = None,
+    verbose: bool = False,
+) -> bool:
     """
     Evaluate yes/no question using LLM judge.
 

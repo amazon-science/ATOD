@@ -6,7 +6,7 @@
 Rate Limiter Utility
 
 Provides consistent rate limiting across all pipeline components
-to avoid AWS Bedrock throttling exceptions.
+to reduce throttling during model calls.
 """
 
 import time

@@ -9,7 +9,7 @@ LLM-based Goal Judge for Evaluation
 
 import json
 import re
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Optional, Tuple
 import sys
 from pathlib import Path
 
@@ -22,10 +22,10 @@ from MemSys.utils.rate_limiter import wait_for_rate_limit
 class LLMGoalJudge:
     """LLM-based judge for evaluating goal detection and status tracking."""
 
-    def __init__(self, model_id: str = "us.anthropic.claude-sonnet-4-20250514-v1:0"):
+    def __init__(self, model_id: Optional[str] = None):
         """Initialize the LLM judge with specified model."""
         self.llm_controller = LLMController(backend="bedrock", model=model_id)
-        self.model_id = model_id
+        self.model_id = self.llm_controller.llm_client.model_id
 
     def compare_goals(self, detected_goals: List[str], gold_goals: List[str]) -> Dict[str, Any]:
         """

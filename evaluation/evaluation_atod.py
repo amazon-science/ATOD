@@ -46,8 +46,11 @@ class DialogueEvaluator:
 
         # Initialize components
         self.dialogue_paths = self._discover_dialogue_files()
-        # Judge model defaults to the backbone; override via ATOD_JUDGE_MODEL_ID for cross-family judge swap.
-        self.llm_judge = LLMGoalJudge(model_id=os.environ.get('ATOD_JUDGE_MODEL_ID', model_id))
+        # The judge defaults to the backbone model. Set ATOD_JUDGE_MODEL_ID to
+        # evaluate with a different compatible judge.
+        self.llm_judge = LLMGoalJudge(
+            model_id=os.environ.get("ATOD_JUDGE_MODEL_ID") or model_id
+        )
         self.model_id = model_id
 
     def _discover_dialogue_files(self) -> Dict[str, str]:
@@ -958,8 +961,12 @@ def main():
                        help='Base delay between API calls in seconds (default: 0.3, increase to 1-2 if throttled)')
     parser.add_argument('--no-jitter', action='store_true',
                        help='Disable random jitter in rate limiting')
-    parser.add_argument('--model-id', type=str, default="us.anthropic.claude-sonnet-4-20250514-v1:0",
-                       help='The model ID to use for evaluation.')
+    parser.add_argument(
+        '--model-id',
+        type=str,
+        default=os.environ.get("ATOD_MODEL_ID"),
+        help='Bedrock model ID. Defaults to the ATOD_MODEL_ID environment variable.',
+    )
     parser.add_argument('--max-samples', type=int, default=None,
                        help='Maximum number of samples to evaluate per complexity level (e.g., 20)')
     parser.add_argument('--verbose', type=int, choices=[0, 1], default=0,
@@ -970,6 +977,8 @@ def main():
                        help='FAISS collection name for local files (default: derived from --output-dir to avoid conflicts)')
 
     args = parser.parse_args()
+    if not args.model_id:
+        parser.error("provide --model-id or set ATOD_MODEL_ID")
 
     # Set complexities based on argument
     if args.complexity == 'all':

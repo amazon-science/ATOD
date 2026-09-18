@@ -17,7 +17,7 @@ scripts/              Dataset validation and statistics utilities
 tests/                Offline smoke tests
 ```
 
-The repository intentionally excludes the data-generation pipeline, baseline experiment harnesses, model weights, AWS credentials, generated result caches, the upstream Schema-Guided Dialogue dataset, and paper/review materials.
+The repository intentionally excludes the data-generation pipeline, baseline experiment harnesses, model weights, credentials, generated result caches, the upstream Schema-Guided Dialogue dataset, and paper/review materials.
 
 ## Dataset
 
@@ -49,21 +49,24 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-The evaluator and memory components invoke models through Amazon Bedrock using the standard `boto3` credential chain. No credentials are included in this repository.
+The released evaluator uses the Bedrock runtime. Configure credentials and a
+region through the standard AWS SDK settings, then provide a compatible model
+ID either through `ATOD_MODEL_ID` or the `--model-id` option:
 
-The paper uses Claude-Sonnet-4 as the memory backbone. You may supply another supported Bedrock model ID through the command line or environment variables.
+```bash
+export ATOD_MODEL_ID="<model-id>"
+```
+
+The exact model configuration used for the reported experiments is described
+in the paper.
 
 ## Run a smoke evaluation
 
-Configure AWS credentials and a region, then run a small sample:
+After configuring model access, run a small sample:
 
 ```bash
-export AWS_REGION="us-east-2"
 python evaluation/evaluation_atod.py \
-  --complexity medium \
-  --max-samples 5 \
-  --model-id "us.anthropic.claude-sonnet-4-20250514-v1:0" \
-  --output-dir results/smoke
+  --max-samples 5
 ```
 
 The full evaluation makes multiple model calls per dialogue and may incur substantial cost. Start with `--max-samples`.

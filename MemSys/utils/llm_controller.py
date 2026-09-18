@@ -4,6 +4,7 @@
 
 from typing import Dict, Optional
 import json
+import os
 import re
 import boto3
 from botocore.config import Config
@@ -13,6 +14,16 @@ import time
 import random
 from pathlib import Path
 from .rate_limiter import wait_for_rate_limit
+
+
+def resolve_model_id(model_id: Optional[str] = None) -> str:
+    """Resolve a model ID from an argument or the ATOD_MODEL_ID environment variable."""
+    resolved = model_id or os.environ.get("ATOD_MODEL_ID")
+    if not resolved:
+        raise ValueError(
+            "No model ID configured. Pass --model-id or set ATOD_MODEL_ID."
+        )
+    return resolved
 
 
 def extract_json_from_llm_response(response: str) -> str:
@@ -67,25 +78,33 @@ def extract_json_from_llm_response(response: str) -> str:
     return response.strip()
 
 class LLMClient:
-    """Simple LLM client for AWS Bedrock Claude API calls."""
+    """Simple client for model calls through the Bedrock runtime."""
 
-    def __init__(self, model_id="us.anthropic.claude-sonnet-4-20250514-v1:0"):
+    def __init__(self, model_id: Optional[str] = None):
         """
         Initialize the LLM client.
 
         Args:
-            model_id: AWS Bedrock model identifier
+            model_id: Bedrock model identifier. Defaults to ATOD_MODEL_ID.
         """
-        import os
+        self.model_id = resolve_model_id(model_id)
         config = Config(
             retries={'max_attempts': 10, 'mode': 'adaptive'},
             read_timeout=150,
             connect_timeout=150
         )
-        # Pin region so this works on instances without a default region in env.
-        region = os.environ.get('BEDROCK_REGION') or os.environ.get('AWS_REGION') or os.environ.get('AWS_DEFAULT_REGION') or 'us-east-1'
-        self.bedrock = boto3.client(service_name='bedrock-runtime', config=config, region_name=region)
-        self.model_id = model_id
+        region = (
+            os.environ.get("BEDROCK_REGION")
+            or os.environ.get("AWS_REGION")
+            or os.environ.get("AWS_DEFAULT_REGION")
+        )
+        client_options = {
+            "service_name": "bedrock-runtime",
+            "config": config,
+        }
+        if region:
+            client_options["region_name"] = region
+        self.bedrock = boto3.client(**client_options)
 
     def call(self, prompt, max_tokens=4096, temperature=0.5, max_retries=8):
         """
@@ -127,16 +146,12 @@ class LLMClient:
             provider = "anthropic"  # Default
 
         if provider == "anthropic":
-            # Some newer Anthropic reasoning models (e.g., claude-sonnet-5) deprecate
-            # `temperature` and lead with a thinking block.
-            temp_deprecated = any(k in mid for k in ("sonnet-5", "claude-5", "opus-5"))
             req = {
                 "anthropic_version": "bedrock-2023-05-31",
                 "max_tokens": max_tokens,
+                "temperature": temperature,
                 "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
             }
-            if not temp_deprecated:
-                req["temperature"] = temperature
         else:  # openai_compat (Qwen, Kimi, MiniMax, DeepSeek)
             req = {
                 "messages": [{"role": "user", "content": prompt}],
@@ -194,15 +209,14 @@ class LLMController:
 
     def __init__(self,
                  backend: str = "bedrock",
-                 model: str = "us.anthropic.claude-sonnet-4-20250514-v1:0"
+                 model: Optional[str] = None
                  ):
         """
         Initialize LLM controller.
 
         Args:
             backend: LLM backend (only "bedrock" supported)
-            model: Model identifier
-            api_key: API key (not used for Bedrock)
+            model: Model identifier. Defaults to ATOD_MODEL_ID.
         """
         if backend != "bedrock":
             print(f"Warning: Backend '{backend}' not supported. Using Bedrock instead.")

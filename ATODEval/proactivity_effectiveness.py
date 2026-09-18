@@ -14,8 +14,9 @@ This metric validates the system's ability to take helpful initiative in task co
 
 import json
 import argparse
+import os
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 import numpy as np
 import sys
 
@@ -52,7 +53,11 @@ def find_proactive_turns(dialogue: Dict[str, Any]) -> List[Dict[str, Any]]:
 from llm_utils import evaluate_yes_no_with_llm
 
 
-def compute_proactivity_effectiveness(dialogue: Dict[str, Any], model_id: str = "us.anthropic.claude-sonnet-4-20250514-v1:0", verbose: bool = False) -> float:
+def compute_proactivity_effectiveness(
+    dialogue: Dict[str, Any],
+    model_id: Optional[str] = None,
+    verbose: bool = False,
+) -> float:
     """Compute proactivity effectiveness using LLM-as-Judge."""
     proactive_turns = find_proactive_turns(dialogue)
 
@@ -92,10 +97,16 @@ def main():
     parser.add_argument('--complexity', choices=['medium', 'complex', 'all'], default='all')
     parser.add_argument('--base-dir', default=None, help='Base directory containing ATOD data')
     parser.add_argument('--sample-size', type=int, default=None, help='Limit to first N dialogues per complexity')
-    parser.add_argument('--model-id', default='us.anthropic.claude-sonnet-4-20250514-v1:0', help='LLM model ID for evaluation')
+    parser.add_argument(
+        '--model-id',
+        default=os.environ.get("ATOD_MODEL_ID"),
+        help='Bedrock model ID. Defaults to ATOD_MODEL_ID.',
+    )
     parser.add_argument('--verbose', action='store_true', help='Show detailed debug output including LLM responses')
     parser.add_argument('--output', default=None, help='Optional JSON output path')
     args = parser.parse_args()
+    if not args.model_id:
+        parser.error("provide --model-id or set ATOD_MODEL_ID")
 
     base_dir = Path(args.base_dir) if args.base_dir else (Path(__file__).resolve().parents[1] / 'data')
     complexities = ['medium', 'complex'] if args.complexity == 'all' else [args.complexity]

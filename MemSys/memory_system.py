@@ -932,7 +932,7 @@ class Orchestrator:
     def __init__(self,
                  model_name: str = None,
                  llm_backend: str = "bedrock",
-                 model_id: str = "us.anthropic.claude-sonnet-4-20250514-v1:0",
+                 model_id: Optional[str] = None,
                  similarity_threshold: float = 0.75,
                  verbose: bool = True,
                  top_k: int = 5,
@@ -944,7 +944,7 @@ class Orchestrator:
         Args:
             model_name: Path to sentence transformer model
             llm_backend: LLM backend to use
-            model_id: LLM model identifier
+            model_id: LLM model identifier. Defaults to ATOD_MODEL_ID.
             similarity_threshold: Threshold for goal similarity matching
             verbose: Enable verbose logging output
             top_k: Top-k retrieval for existence checking and goal evolution
