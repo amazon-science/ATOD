@@ -1,0 +1,42 @@
+cff-version: 1.2.0
+message: "If you use ATOD or ATOD-Eval, please cite the associated paper."
+title: "ATOD: An Evaluation Framework and Benchmark for Agentic Task-Oriented Dialogue Systems"
+type: software
+version: 1.0.0
+year: 2026
+license: CC-BY-NC-4.0
+authors:
+  - family-names: Zhang
+    given-names: Yifei
+  - family-names: Nayyeri
+    given-names: Hooshang
+  - family-names: Khaziev
+    given-names: Rinat
+  - family-names: Yilmaz
+    given-names: Emine
+  - family-names: Tur
+    given-names: Gokhan
+  - family-names: Hakkani-Tur
+    given-names: Dilek
+  - family-names: Thadakamalla
+    given-names: Hari
+preferred-citation:
+  type: conference-paper
+  title: "ATOD: An Evaluation Framework and Benchmark for Agentic Task-Oriented Dialogue Systems"
+  year: 2026
+  authors:
+    - family-names: Zhang
+      given-names: Yifei
+    - family-names: Nayyeri
+      given-names: Hooshang
+    - family-names: Khaziev
+      given-names: Rinat
+    - family-names: Yilmaz
+      given-names: Emine
+    - family-names: Tur
+      given-names: Gokhan
+    - family-names: Hakkani-Tur
+      given-names: Dilek
+    - family-names: Thadakamalla
+      given-names: Hari
+  collection-title: "Proceedings of AACL 2026"

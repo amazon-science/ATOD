@@ -1,0 +1,21 @@
+{
+  "encoding": "UTF-8",
+  "format": "compact JSON array",
+  "splits": {
+    "complex": {
+      "bytes": 53536358,
+      "dialogues": 572,
+      "file": "data/complex/annotated_dialogues.json",
+      "sha256": "8534d29916ecabc3c101dc096ae6a63e1869d2353b35c01c2bca7c6f03582222",
+      "source_sha256": "8a6b7387a6eea78859f8c60195291af4cf1b7fa6439ba2bd95fde34ec862adb6"
+    },
+    "medium": {
+      "bytes": 11424067,
+      "dialogues": 428,
+      "file": "data/medium/annotated_dialogues.json",
+      "sha256": "b35c8279d70d68a53e70aab782985514fcb77f568dadaf13fe57158e57724fd4",
+      "source_sha256": "dda12100c9e3efba522bdb37fde3f219fb9b05ecda40f993e372da4b5e6983e3"
+    }
+  },
+  "total_dialogues": 1000
+}

@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "atod-eval"
+version = "1.0.0"
+description = "Evaluation code for the ATOD agentic task-oriented dialogue benchmark"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "CC-BY-NC-4.0" }
+authors = [
+  { name = "Yifei Zhang" },
+  { name = "Hooshang Nayyeri" },
+  { name = "Rinat Khaziev" },
+  { name = "Emine Yilmaz" },
+  { name = "Gokhan Tur" },
+  { name = "Dilek Hakkani-Tur" },
+  { name = "Hari Thadakamalla" },
+]
+dynamic = ["dependencies"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["MemSys*", "evaluation*", "ATODEval*"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
