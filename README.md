@@ -2,7 +2,7 @@
 
 ATOD is a benchmark and evaluation framework for agentic task-oriented dialogue systems. It accompanies the AACL 2026 paper:
 
-> **ATOD: An Evaluation Framework and Benchmark for Agentic Task-Oriented Dialogue Systems**
+> [**ATOD: An Evaluation Framework and Benchmark for Agentic Task-Oriented Dialogue Systems**](https://arxiv.org/abs/2601.11854)
 
 The repository contains the fixed 1,000-dialogue ATOD benchmark and the code required to run ATOD-Eval.
 
@@ -81,4 +81,15 @@ Unless otherwise noted, the code and ATOD data are released under the Creative C
 
 ## Citation
 
-Citation metadata is provided in [CITATION.cff](CITATION.cff). The proceedings entry should be updated when the final Anthology record becomes available.
+If you use ATOD or ATOD-Eval, please cite:
+
+```bibtex
+@article{zhang2026atod,
+  title={ATOD: An Evaluation Framework and Benchmark for Agentic Task-Oriented Dialogue Systems},
+  author={Zhang, Yifei and Nayyeri, Hooshang and Khaziev, Rinat and Yilmaz, Emine and Tur, Gokhan and Hakkani-T{\"u}r, Dilek and Thadakamalla, Hari},
+  journal={arXiv preprint arXiv:2601.11854},
+  year={2026}
+}
+```
+
+The paper is available on [arXiv](https://arxiv.org/abs/2601.11854). Citation metadata is also provided in [CITATION.cff](CITATION.cff) and will be updated when the final Anthology record becomes available.

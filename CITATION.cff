@@ -5,6 +5,7 @@ type: software
 version: 1.0.0
 year: 2026
 license: CC-BY-NC-4.0
+url: "https://arxiv.org/abs/2601.11854"
 authors:
   - family-names: Zhang
     given-names: Yifei
@@ -16,12 +17,12 @@ authors:
     given-names: Emine
   - family-names: Tur
     given-names: Gokhan
-  - family-names: Hakkani-Tur
+  - family-names: Hakkani-Tür
     given-names: Dilek
   - family-names: Thadakamalla
     given-names: Hari
 preferred-citation:
-  type: conference-paper
+  type: article
   title: "ATOD: An Evaluation Framework and Benchmark for Agentic Task-Oriented Dialogue Systems"
   year: 2026
   authors:
@@ -35,8 +36,9 @@ preferred-citation:
       given-names: Emine
     - family-names: Tur
       given-names: Gokhan
-    - family-names: Hakkani-Tur
+    - family-names: Hakkani-Tür
       given-names: Dilek
     - family-names: Thadakamalla
       given-names: Hari
-  collection-title: "Proceedings of AACL 2026"
+  journal: "arXiv preprint arXiv:2601.11854"
+  url: "https://arxiv.org/abs/2601.11854"
