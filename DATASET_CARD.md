@@ -40,7 +40,7 @@ Automated release validation checks:
 - Required fields and supported status values
 - Goal-ID and dependency consistency
 - Alternating user/system turns
-- Absence of common credential patterns and Amazon-internal domains
+- Absence of common credential patterns
 - Release-file checksums
 
 The paper additionally reports a single-author manual audit of evaluator decisions.

@@ -35,9 +35,7 @@ ALLOWED_STATUSES = {
 BLOCKED_PATTERNS = {
     "aws_access_key": re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     "private_key": re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
-    "internal_domain": re.compile(
-        r"\b(?:a2z\.com|aws\.dev|git\.amazon|corp\.amazon|midway-auth)\b", re.I
-    ),
+    "bearer_token": re.compile(r"\bBearer\s+[A-Za-z0-9._-]{20,}\b"),
 }
 INFORMATIONAL_PATTERNS = {
     "email_like_string": re.compile(
