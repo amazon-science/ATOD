@@ -8,6 +8,7 @@ __pycache__/
 venv/
 results/
 outputs/
+generation/work/
 *.log
 *.faiss
 *_faiss.index

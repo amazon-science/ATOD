@@ -28,7 +28,7 @@ The complete structural specification is in `data/schema.json`.
 
 ## Creation process
 
-The internal generation process extracts goal structures from the publicly available Schema-Guided Dialogue dataset, constructs goal co-occurrence graphs, samples goal trajectories, and uses an LLM to generate and annotate synthetic dialogues. Neither the generation pipeline nor the upstream dataset is redistributed here.
+The generation pipeline (released under `generation/`) extracts goal structures from the publicly available Schema-Guided Dialogue dataset, constructs a goal co-occurrence graph, samples goal trajectories by random walks, and uses an LLM to annotate trajectories, generate dialogues, and label turn-level goal status. The upstream dataset is not redistributed here.
 
 The released files are the fixed benchmark artifacts used for evaluation, not regenerated outputs. Random regeneration may differ because it depends on model availability and stochastic model behavior.
 

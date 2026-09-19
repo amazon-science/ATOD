@@ -61,12 +61,14 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def validate_split(path: Path, complexity: str) -> tuple[list[str], dict]:
+def validate_split(
+    path: Path, complexity: str, check_counts: bool = True
+) -> tuple[list[str], dict]:
     errors: list[str] = []
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, list):
         return [f"{path}: top-level value must be an array"], {}
-    if len(data) != EXPECTED_COUNTS[complexity]:
+    if check_counts and len(data) != EXPECTED_COUNTS[complexity]:
         errors.append(
             f"{path}: expected {EXPECTED_COUNTS[complexity]} dialogues, found {len(data)}"
         )
@@ -151,6 +153,11 @@ def main() -> None:
         type=Path,
         default=Path(__file__).resolve().parents[1] / "data",
     )
+    parser.add_argument(
+        "--skip-counts",
+        action="store_true",
+        help="Do not enforce the released split sizes (for freshly generated sets).",
+    )
     args = parser.parse_args()
 
     all_errors: list[str] = []
@@ -160,7 +167,9 @@ def main() -> None:
         if not path.exists():
             all_errors.append(f"Missing {path}")
             continue
-        errors, stats = validate_split(path, complexity)
+        errors, stats = validate_split(
+            path, complexity, check_counts=not args.skip_counts
+        )
         all_errors.extend(errors)
         all_ids.extend(stats.get("dialogue_ids", []))
         print(

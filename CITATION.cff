@@ -20,7 +20,7 @@ authors:
   - family-names: Hakkani-Tür
     given-names: Dilek
   - family-names: Thadakamalla
-    given-names: Hari
+    given-names: Hari P
 preferred-citation:
   type: article
   title: "ATOD: An Evaluation Framework and Benchmark for Agentic Task-Oriented Dialogue Systems"
@@ -39,6 +39,6 @@ preferred-citation:
     - family-names: Hakkani-Tür
       given-names: Dilek
     - family-names: Thadakamalla
-      given-names: Hari
+      given-names: Hari P
   journal: "arXiv preprint arXiv:2601.11854"
   url: "https://arxiv.org/abs/2601.11854"
