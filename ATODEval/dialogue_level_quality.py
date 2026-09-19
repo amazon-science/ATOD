@@ -4,154 +4,89 @@
 # SPDX-License-Identifier: CC-BY-NC-4.0
 
 """
-Dialogue-level Quality - LLM-Judged
+Dialogue-level Coherence -- LLM-judged.
 
-Evaluates overall dialogue quality using LLM-as-a-Judge.
-Measures naturalness, coherence, logical progression, and overall effectiveness.
-
-This metric validates the quality of complete task-oriented dialogues.
+The full conversation is scored on its native 1--5 scale for global
+consistency and coherent progression across interleaved goals, using the
+response-quality prompt from the paper appendix (``dialogue_quality`` field).
 """
 
 import json
 import argparse
-import os
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-import numpy as np
 
+from statistics import mean, pstdev
 
-def load_dialogues(file_path: Path) -> List[Dict[str, Any]]:
-    """Load dialogues from JSON file."""
-    with open(file_path, 'r') as f:
-        data = json.load(f)
-    return data
-
-
-from llm_utils import evaluate_with_llm_judge
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from llm_utils import evaluate_json_with_llm, format_dialogue_context  # noqa: E402
+from turn_level_quality import MAX_SCORE, _score, response_quality_prompt  # noqa: E402
 
 
 def compute_dialogue_level_quality(
     dialogue: Dict[str, Any],
     model_id: Optional[str] = None,
     verbose: bool = False,
-) -> float:
-    """Compute overall dialogue quality using LLM-as-Judge."""
-    turns = dialogue.get('turns', [])
-
+) -> Optional[float]:
+    """dialogue_quality (1--5) for the full conversation; None when unparseable."""
+    turns = dialogue.get("turns", [])
     if not turns:
-        return 0.0
+        return None
+    full_dialogue = format_dialogue_context(turns)
+    final_system = next((t.get("utterance", "") for t in reversed(turns) if t.get("speaker") == "SYSTEM"), "")
+    prompt = response_quality_prompt(full_dialogue, final_system, full_dialogue)
+    result = evaluate_json_with_llm(prompt, model_id=model_id, verbose=verbose)
+    return _score(result.get("dialogue_quality"))
 
-    # Create dialogue text for LLM evaluation
-    dialogue_text = "\n".join([
-        f"{turn.get('speaker', 'UNKNOWN')}: {turn.get('utterance', '')}"
-        for turn in turns
-    ])
 
-    # Create LLM judge prompt for dialogue quality
-    prompt = f"""Rate this dialogue quality (0-10):
-
-{dialogue_text}
-
-Consider: naturalness, coherence, goal progression, effectiveness
-
-Score (just the number 0-10):"""
-
-    # Get LLM judgment
-    return evaluate_with_llm_judge(prompt, model_id=model_id, verbose=verbose)
+def load_dialogues(file_path: Path) -> List[Dict[str, Any]]:
+    with open(file_path, "r") as f:
+        return json.load(f)
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Compute Dialogue-level Quality from A-TOD annotated dialogues')
-    parser.add_argument('--complexity', choices=['medium', 'complex', 'all'], default='all')
-    parser.add_argument('--base-dir', default=None, help='Base directory containing ATOD data')
-    parser.add_argument('--sample-size', type=int, default=None, help='Limit to first N dialogues per complexity')
-    parser.add_argument(
-        '--model-id',
-        default=os.environ.get("ATOD_MODEL_ID"),
-        help='Bedrock model ID. Defaults to ATOD_MODEL_ID.',
-    )
-    parser.add_argument('--verbose', action='store_true', help='Show detailed debug output including LLM responses')
-    parser.add_argument('--output', default=None, help='Optional JSON output path')
+    parser = argparse.ArgumentParser(description="Compute dialogue-level coherence with an LLM judge")
+    parser.add_argument("--complexity", choices=["medium", "complex", "all"], default="all")
+    parser.add_argument("--base-dir", default=None, help="Directory containing medium/ and complex/")
+    parser.add_argument("--sample-size", type=int, default=None)
+    parser.add_argument("--model-id", default=None, help="Judge model ID (defaults to ATOD_MODEL_ID)")
+    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--output", default=None)
     args = parser.parse_args()
-    if not args.model_id:
-        parser.error("provide --model-id or set ATOD_MODEL_ID")
 
-    base_dir = Path(args.base_dir) if args.base_dir else (Path(__file__).resolve().parents[1] / 'data')
-    complexities = ['medium', 'complex'] if args.complexity == 'all' else [args.complexity]
+    base_dir = Path(args.base_dir) if args.base_dir else (Path(__file__).resolve().parents[1] / "data")
+    complexities = ["medium", "complex"] if args.complexity == "all" else [args.complexity]
 
-    summary = {
-        'by_complexity': {},
-        'overall': {'total_dialogues': 0, 'avg_quality': 0.0},
-        'base_dir': str(base_dir)
-    }
-
-    all_scores = []
-
+    summary: Dict[str, Any] = {"by_complexity": {}, "overall": {}}
+    all_scores: List[float] = []
     for comp in complexities:
-        file_path = base_dir / comp / 'annotated_dialogues.json'
+        file_path = base_dir / comp / "annotated_dialogues.json"
         if not file_path.exists():
             print(f"Warning: {file_path} not found, skipping {comp}")
             continue
-
         dialogues = load_dialogues(file_path)
-
-        # Apply sampling if specified
-        if args.sample_size and args.sample_size > 0:
-            dialogues = dialogues[:args.sample_size]
-            print(f"Sampling first {len(dialogues)} {comp} dialogues")
-        else:
-            print(f"Processing all {len(dialogues)} {comp} dialogues")
-
-        comp_scores = []
-        total_turns = 0
-
-        for dialogue in dialogues:
-            try:
-                total_turns += len(dialogue.get('turns', []))
-
-                score = compute_dialogue_level_quality(dialogue, model_id=args.model_id, verbose=args.verbose)
-                comp_scores.append(score)
-                all_scores.append(score)
-            except Exception as e:
-                print(f"Error processing dialogue {dialogue.get('dialogue_id', 'unknown')}: {e}")
-                continue
-
-        if comp_scores:
-            summary['by_complexity'][comp] = {
-                'avg_quality': np.mean(comp_scores),
-                'std_quality': np.std(comp_scores),
-                'n_dialogues': len(comp_scores),
-                'total_turns': total_turns
-            }
-
-    # Overall summary
+        if args.sample_size:
+            dialogues = dialogues[: args.sample_size]
+        scores = [s for s in (compute_dialogue_level_quality(d, model_id=args.model_id, verbose=args.verbose) for d in dialogues) if s is not None]
+        if scores:
+            summary["by_complexity"][comp] = {"dialogue_level_coherence": mean(scores), "std": pstdev(scores), "dialogues": len(scores)}
+            all_scores.extend(scores)
     if all_scores:
-        summary['overall'] = {
-            'avg_quality': np.mean(all_scores),
-            'std_quality': np.std(all_scores),
-            'total_dialogues': len(all_scores)
-        }
+        summary["overall"] = {"dialogue_level_coherence": mean(all_scores), "std": pstdev(all_scores), "dialogues": len(all_scores)}
 
-    # Print results
-    print('=== Dialogue-level Quality (LLM-Judged) ===')
-    for comp in complexities:
-        if comp in summary['by_complexity']:
-            s = summary['by_complexity'][comp]
-            print(f"{comp.capitalize():8s} -> Quality: {s['avg_quality']:.3f} ± {s['std_quality']:.3f} "
-                  f"({s['n_dialogues']} dialogues, {s['total_turns']} turns)")
+    print(f"=== Dialogue-level Coherence (1-{int(MAX_SCORE)}) ===")
+    for comp, s in summary["by_complexity"].items():
+        print(f"{comp.capitalize():8s} -> {s['dialogue_level_coherence']:.2f} ± {s['std']:.2f} ({s['dialogues']} dialogues)")
+    if summary["overall"]:
+        print(f"Overall   -> {summary['overall']['dialogue_level_coherence']:.2f} ({summary['overall']['dialogues']} dialogues)")
 
-    if summary['overall']['total_dialogues'] > 0:
-        o = summary['overall']
-        print(f"Overall   -> Quality: {o['avg_quality']:.3f} ± {o['std_quality']:.3f} ({o['total_dialogues']} dialogues)")
-
-    # Save results
     if args.output:
         out_path = Path(args.output)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(out_path, 'w') as f:
-            json.dump(summary, f, indent=2)
+        out_path.write_text(json.dumps(summary, indent=2))
         print(f"Saved results to {out_path}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

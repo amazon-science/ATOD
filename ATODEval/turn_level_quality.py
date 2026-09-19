@@ -4,158 +4,120 @@
 # SPDX-License-Identifier: CC-BY-NC-4.0
 
 """
-Turn-level Quality - LLM-Judged
+Turn-level Relevance -- LLM-judged response quality.
 
-Evaluates the average quality of system responses using LLM-as-a-Judge.
-Measures helpfulness, clarity, naturalness, and appropriateness for task completion.
-
-This metric validates the quality of individual system responses in task-oriented dialogues.
+Every system response is scored on a 1--5 scale against the local context, the
+current request and the tracked goal state (response-quality prompt, paper
+appendix). Scores are averaged over system turns and reported as a fraction of
+the maximum score (s / 5).
 """
 
 import json
 import argparse
-import os
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-import numpy as np
+
+from statistics import mean, pstdev
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from llm_utils import evaluate_json_with_llm, format_dialogue_context, goal_state_json  # noqa: E402
+
+MAX_SCORE = 5.0
 
 
-def load_dialogues(file_path: Path) -> List[Dict[str, Any]]:
-    """Load dialogues from JSON file."""
-    with open(file_path, 'r') as f:
-        data = json.load(f)
-    return data
+def response_quality_prompt(dialogue_context: str, system_response: str, goal_state_or_full_dialogue: str) -> str:
+    return f"""You are evaluating the response quality of a task-oriented dialogue system.
+
+Dialogue Context: {dialogue_context}
+Response Under Evaluation: {system_response}
+Goal State / Dialogue Reference: {goal_state_or_full_dialogue}
+
+Turn-Level Relevance: addresses current request; consistent with tracked goals; useful and natural
+Dialogue-Level Coherence: globally consistent; interleaved goals progress coherently; no contradictions
+
+Output format (JSON): {{"turn_quality": 1-5, "dialogue_quality": 1-5}}"""
 
 
-from llm_utils import evaluate_with_llm_judge
+def _score(value: Any) -> Optional[float]:
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return None
+    return min(MAX_SCORE, max(1.0, score))
 
 
 def compute_turn_level_quality(
     dialogue: Dict[str, Any],
     model_id: Optional[str] = None,
     verbose: bool = False,
-) -> float:
-    """Compute average turn-level quality using LLM-as-Judge for system responses."""
-    turns = dialogue.get('turns', [])
-    system_turns = [t for t in turns if t.get('speaker') == 'SYSTEM']
+    context_window: int = 8,
+) -> Optional[float]:
+    """Average turn_quality / 5 over system responses; None when no system turns."""
+    turns = dialogue.get("turns", [])
+    scores = []
+    for idx, turn in enumerate(turns):
+        if turn.get("speaker") != "SYSTEM":
+            continue
+        prompt = response_quality_prompt(
+            format_dialogue_context(turns, upto=idx, window=context_window),
+            turn.get("utterance", ""),
+            goal_state_json(turn),
+        )
+        result = evaluate_json_with_llm(prompt, model_id=model_id, verbose=verbose)
+        score = _score(result.get("turn_quality"))
+        if score is not None:
+            scores.append(score / MAX_SCORE)
+    return mean(scores) if scores else None
 
-    if not system_turns:
-        return 0.0
 
-    quality_scores = []
-
-    for turn in system_turns:
-        utterance = turn.get('utterance', '')
-
-        # Create LLM judge prompt for turn quality
-        prompt = f"""Rate this system response quality (0-10):
-
-System: "{utterance}"
-
-Consider: helpfulness, clarity, naturalness, task appropriateness
-
-Score (just the number 0-10):"""
-
-        # Get LLM judgment
-        score = evaluate_with_llm_judge(prompt, model_id=model_id, verbose=verbose)
-        quality_scores.append(score)
-
-    return np.mean(quality_scores) if quality_scores else 0.0
+def load_dialogues(file_path: Path) -> List[Dict[str, Any]]:
+    with open(file_path, "r") as f:
+        return json.load(f)
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Compute Turn-level Quality from A-TOD annotated dialogues')
-    parser.add_argument('--complexity', choices=['medium', 'complex', 'all'], default='all')
-    parser.add_argument('--base-dir', default=None, help='Base directory containing ATOD data')
-    parser.add_argument('--sample-size', type=int, default=None, help='Limit to first N dialogues per complexity')
-    parser.add_argument(
-        '--model-id',
-        default=os.environ.get("ATOD_MODEL_ID"),
-        help='Bedrock model ID. Defaults to ATOD_MODEL_ID.',
-    )
-    parser.add_argument('--verbose', action='store_true', help='Show detailed debug output including LLM responses')
-    parser.add_argument('--output', default=None, help='Optional JSON output path')
+    parser = argparse.ArgumentParser(description="Compute turn-level relevance with an LLM judge")
+    parser.add_argument("--complexity", choices=["medium", "complex", "all"], default="all")
+    parser.add_argument("--base-dir", default=None, help="Directory containing medium/ and complex/")
+    parser.add_argument("--sample-size", type=int, default=None)
+    parser.add_argument("--model-id", default=None, help="Judge model ID (defaults to ATOD_MODEL_ID)")
+    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--output", default=None)
     args = parser.parse_args()
-    if not args.model_id:
-        parser.error("provide --model-id or set ATOD_MODEL_ID")
 
-    base_dir = Path(args.base_dir) if args.base_dir else (Path(__file__).resolve().parents[1] / 'data')
-    complexities = ['medium', 'complex'] if args.complexity == 'all' else [args.complexity]
+    base_dir = Path(args.base_dir) if args.base_dir else (Path(__file__).resolve().parents[1] / "data")
+    complexities = ["medium", "complex"] if args.complexity == "all" else [args.complexity]
 
-    summary = {
-        'by_complexity': {},
-        'overall': {'total_dialogues': 0, 'avg_quality': 0.0},
-        'base_dir': str(base_dir)
-    }
-
-    all_scores = []
-
+    summary: Dict[str, Any] = {"by_complexity": {}, "overall": {}}
+    all_scores: List[float] = []
     for comp in complexities:
-        file_path = base_dir / comp / 'annotated_dialogues.json'
+        file_path = base_dir / comp / "annotated_dialogues.json"
         if not file_path.exists():
             print(f"Warning: {file_path} not found, skipping {comp}")
             continue
-
         dialogues = load_dialogues(file_path)
-
-        # Apply sampling if specified
-        if args.sample_size and args.sample_size > 0:
-            dialogues = dialogues[:args.sample_size]
-            print(f"Sampling first {len(dialogues)} {comp} dialogues")
-        else:
-            print(f"Processing all {len(dialogues)} {comp} dialogues")
-
-        comp_scores = []
-        total_system_turns = 0
-
-        for dialogue in dialogues:
-            try:
-                system_turns = [t for t in dialogue.get('turns', []) if t.get('speaker') == 'SYSTEM']
-                total_system_turns += len(system_turns)
-
-                score = compute_turn_level_quality(dialogue, model_id=args.model_id, verbose=args.verbose)
-                comp_scores.append(score)
-                all_scores.append(score)
-            except Exception as e:
-                print(f"Error processing dialogue {dialogue.get('dialogue_id', 'unknown')}: {e}")
-                continue
-
-        if comp_scores:
-            summary['by_complexity'][comp] = {
-                'avg_quality': np.mean(comp_scores),
-                'std_quality': np.std(comp_scores),
-                'n_dialogues': len(comp_scores),
-                'total_system_turns': total_system_turns
-            }
-
-    # Overall summary
+        if args.sample_size:
+            dialogues = dialogues[: args.sample_size]
+        scores = [s for s in (compute_turn_level_quality(d, model_id=args.model_id, verbose=args.verbose) for d in dialogues) if s is not None]
+        if scores:
+            summary["by_complexity"][comp] = {"turn_level_relevance": mean(scores), "std": pstdev(scores), "dialogues": len(scores)}
+            all_scores.extend(scores)
     if all_scores:
-        summary['overall'] = {
-            'avg_quality': np.mean(all_scores),
-            'std_quality': np.std(all_scores),
-            'total_dialogues': len(all_scores)
-        }
+        summary["overall"] = {"turn_level_relevance": mean(all_scores), "std": pstdev(all_scores), "dialogues": len(all_scores)}
 
-    # Print results
-    print('=== Turn-level Quality (LLM-Judged) ===')
-    for comp in complexities:
-        if comp in summary['by_complexity']:
-            s = summary['by_complexity'][comp]
-            print(f"{comp.capitalize():8s} -> Quality: {s['avg_quality']:.3f} ± {s['std_quality']:.3f} "
-                  f"({s['n_dialogues']} dialogues, {s['total_system_turns']} system turns)")
+    print("=== Turn-level Relevance (score / 5) ===")
+    for comp, s in summary["by_complexity"].items():
+        print(f"{comp.capitalize():8s} -> {s['turn_level_relevance']:.3f} ± {s['std']:.3f} ({s['dialogues']} dialogues)")
+    if summary["overall"]:
+        print(f"Overall   -> {summary['overall']['turn_level_relevance']:.3f} ({summary['overall']['dialogues']} dialogues)")
 
-    if summary['overall']['total_dialogues'] > 0:
-        o = summary['overall']
-        print(f"Overall   -> Quality: {o['avg_quality']:.3f} ± {o['std_quality']:.3f} ({o['total_dialogues']} dialogues)")
-
-    # Save results
     if args.output:
         out_path = Path(args.output)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(out_path, 'w') as f:
-            json.dump(summary, f, indent=2)
+        out_path.write_text(json.dumps(summary, indent=2))
         print(f"Saved results to {out_path}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

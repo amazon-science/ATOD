@@ -4,138 +4,156 @@
 # SPDX-License-Identifier: CC-BY-NC-4.0
 
 """
-Memory Recall Accuracy (MRA) - Ground Truth Based
+Memory Recall Accuracy (MRA) -- LLM-judged.
 
-Computes Memory Recall Accuracy by checking if earlier goals are completed by dialogue end.
-Earlier goals are defined as goals mentioned in the first half of the dialogue.
+At every turn in which a goal status changes, a retrieval query is built from
+the affected goal description and the recent context using a fixed template.
+An LLM judge compares the evaluated system's retrieved memory for that turn
+against the ground-truth memory snapshot derived from the annotation and
+returns ``match`` in {0, 1} based on sufficiency and semantic consistency.
 
-This metric validates the system's ability to maintain consistent memory of goal states
-across the dialogue progression.
+    MRA = (1 / |Q|) * sum_{q_t in Q} match_t
+
+The system output is supplied as a JSON file with the same structure as the
+annotated dialogues (``dialogue_id`` and ``turns[].all_goals`` holding the
+system's tracked goal state after each turn), for example the per-turn states
+produced by the memory evaluator.
 """
 
 import json
 import argparse
+import sys
 from pathlib import Path
-from typing import Any, Dict, List
-import numpy as np
+from typing import Any, Dict, List, Optional
+
+from statistics import mean, pstdev
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from llm_utils import evaluate_json_with_llm, format_dialogue_context, goal_state_json  # noqa: E402
+
+
+def build_query(goal: Dict[str, Any], recent_context: str) -> str:
+    """Fixed retrieval-query template."""
+    description = goal.get("content") or goal.get("core_content") or goal.get("id", "")
+    return f"What is the current state of the goal \"{description}\" given the recent conversation?\n{recent_context}"
+
+
+def mra_prompt(dialogue_context: str, memory_query: str, gold_memory_json: str, predicted_memory: str) -> str:
+    return f"""You are evaluating whether a retrieved memory output correctly matches the benchmark memory state.
+
+Dialogue Context: {dialogue_context}
+Retrieval Query: {memory_query}
+Ground-Truth Memory State: {gold_memory_json}
+Retrieved Memory Output: {predicted_memory}
+
+Judging Criteria:
+- Retrieved output contains information required to answer the query
+- Goal statuses, slot values, and historical facts are semantically consistent with gold state
+- No contradiction is introduced
+
+Output format (JSON): {{"match": 0 or 1}}"""
+
+
+def status_change_queries(dialogue: Dict[str, Any], context_window: int = 4) -> List[Dict[str, Any]]:
+    """One query per (turn, changed goal) in the gold annotation."""
+    goals = {g["id"]: g for g in dialogue.get("goal_list", [])}
+    turns = dialogue.get("turns", [])
+    queries = []
+    for idx, turn in enumerate(turns):
+        for change in turn.get("goal_status_changes", []) or []:
+            goal = goals.get(change.get("goal_id"))
+            if goal is None:
+                continue
+            queries.append({
+                "turn_index": idx,
+                "goal_id": goal["id"],
+                "query": build_query(goal, format_dialogue_context(turns, upto=idx + 1, window=context_window)),
+            })
+    return queries
+
+
+def compute_memory_recall_accuracy(
+    dialogue: Dict[str, Any],
+    predicted: Dict[str, Any],
+    model_id: Optional[str] = None,
+    verbose: bool = False,
+    context_window: int = 8,
+) -> Optional[float]:
+    """MRA for one dialogue given the system's per-turn goal states; None without queries."""
+    queries = status_change_queries(dialogue)
+    if not queries:
+        return None
+    gold_turns = dialogue.get("turns", [])
+    pred_turns = predicted.get("turns", [])
+    matches = []
+    for q in queries:
+        idx = q["turn_index"]
+        gold_state = goal_state_json(gold_turns[idx], {q["goal_id"]})
+        predicted_state = goal_state_json(pred_turns[idx]) if idx < len(pred_turns) else "[]"
+        prompt = mra_prompt(format_dialogue_context(gold_turns, upto=idx + 1, window=context_window), q["query"], gold_state, predicted_state)
+        decision = evaluate_json_with_llm(prompt, model_id=model_id, verbose=verbose)
+        matches.append(1 if str(decision.get("match", 0)).strip() in {"1", "True", "true"} else 0)
+    return mean(matches)
 
 
 def load_dialogues(file_path: Path) -> List[Dict[str, Any]]:
-    """Load dialogues from JSON file."""
-    with open(file_path, 'r') as f:
-        data = json.load(f)
-    return data
-
-
-def compute_memory_recall_accuracy(dialogue: Dict[str, Any]) -> float:
-    """
-    Compute Memory Recall Accuracy by checking if earlier goals are completed by dialogue end.
-    Earlier goals are defined as goals mentioned in the first half of the dialogue.
-    """
-    goals = dialogue.get('goal_list', [])
-    turns = dialogue.get('turns', [])
-
-    if not goals or not turns:
-        return 0.0
-
-    total_turns = len(turns)
-    early_threshold = total_turns // 2  # First half of dialogue
-
-    # Find goals mentioned in first half
-    early_goals = []
-    for goal in goals:
-        first_mentioned = goal.get('first_mentioned_turn', goal.get('initiation_turn'))
-        if isinstance(first_mentioned, int) and first_mentioned <= early_threshold:
-            early_goals.append(goal)
-
-    if not early_goals:
-        return 1.0  # No early goals to recall
-
-    # Check how many early goals are completed by dialogue end
-    completed_early_goals = sum(1 for g in early_goals
-                               if g.get('status', '').lower() == 'completed')
-
-    return completed_early_goals / len(early_goals)
+    with open(file_path, "r") as f:
+        return json.load(f)
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Compute Memory Recall Accuracy from A-TOD annotated dialogues')
-    parser.add_argument('--complexity', choices=['medium', 'complex', 'all'], default='all')
-    parser.add_argument('--base-dir', default=None, help='Base directory containing ATOD data')
-    parser.add_argument('--sample-size', type=int, default=None, help='Limit to first N dialogues per complexity')
-    parser.add_argument('--output', default=None, help='Optional JSON output path')
+    parser = argparse.ArgumentParser(description="Compute Memory Recall Accuracy (MRA) with an LLM judge")
+    parser.add_argument("--complexity", choices=["medium", "complex", "all"], default="all")
+    parser.add_argument("--base-dir", default=None, help="Directory containing gold medium/ and complex/")
+    parser.add_argument("--predictions-dir", required=True, help="Directory with the system's medium/complex per-turn goal states (same file layout)")
+    parser.add_argument("--sample-size", type=int, default=None)
+    parser.add_argument("--model-id", default=None, help="Judge model ID (defaults to ATOD_MODEL_ID)")
+    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--output", default=None)
     args = parser.parse_args()
 
-    base_dir = Path(args.base_dir) if args.base_dir else (Path(__file__).resolve().parents[1] / 'data')
-    complexities = ['medium', 'complex'] if args.complexity == 'all' else [args.complexity]
+    base_dir = Path(args.base_dir) if args.base_dir else (Path(__file__).resolve().parents[1] / "data")
+    pred_dir = Path(args.predictions_dir)
+    complexities = ["medium", "complex"] if args.complexity == "all" else [args.complexity]
 
-    summary = {
-        'by_complexity': {},
-        'overall': {'total_dialogues': 0, 'avg_mra': 0.0},
-        'base_dir': str(base_dir)
-    }
-
-    all_scores = []
-
+    summary: Dict[str, Any] = {"by_complexity": {}, "overall": {}}
+    all_scores: List[float] = []
     for comp in complexities:
-        file_path = base_dir / comp / 'annotated_dialogues.json'
-        if not file_path.exists():
-            print(f"Warning: {file_path} not found, skipping {comp}")
+        gold_path = base_dir / comp / "annotated_dialogues.json"
+        pred_path = pred_dir / comp / "annotated_dialogues.json"
+        if not gold_path.exists() or not pred_path.exists():
+            print(f"Warning: missing {gold_path} or {pred_path}, skipping {comp}")
             continue
-
-        dialogues = load_dialogues(file_path)
-
-        # Apply sampling if specified
-        if args.sample_size and args.sample_size > 0:
-            dialogues = dialogues[:args.sample_size]
-            print(f"Sampling first {len(dialogues)} {comp} dialogues")
-        else:
-            print(f"Processing all {len(dialogues)} {comp} dialogues")
-
-        comp_scores = []
+        predictions = {d["dialogue_id"]: d for d in load_dialogues(pred_path)}
+        dialogues = load_dialogues(gold_path)
+        if args.sample_size:
+            dialogues = dialogues[: args.sample_size]
+        scores = []
         for dialogue in dialogues:
-            try:
-                score = compute_memory_recall_accuracy(dialogue)
-                comp_scores.append(score)
-                all_scores.append(score)
-            except Exception as e:
-                print(f"Error processing dialogue {dialogue.get('dialogue_id', 'unknown')}: {e}")
+            predicted = predictions.get(dialogue["dialogue_id"])
+            if predicted is None:
                 continue
-
-        if comp_scores:
-            summary['by_complexity'][comp] = {
-                'avg_mra': np.mean(comp_scores),
-                'std_mra': np.std(comp_scores),
-                'n_dialogues': len(comp_scores)
-            }
-
-    # Overall summary
+            score = compute_memory_recall_accuracy(dialogue, predicted, model_id=args.model_id, verbose=args.verbose)
+            if score is not None:
+                scores.append(score)
+        if scores:
+            summary["by_complexity"][comp] = {"MRA": mean(scores), "std": pstdev(scores), "dialogues": len(scores)}
+            all_scores.extend(scores)
     if all_scores:
-        summary['overall'] = {
-            'avg_mra': np.mean(all_scores),
-            'std_mra': np.std(all_scores),
-            'total_dialogues': len(all_scores)
-        }
+        summary["overall"] = {"MRA": mean(all_scores), "std": pstdev(all_scores), "dialogues": len(all_scores)}
 
-    # Print results
-    print('=== Memory Recall Accuracy (MRA) ===')
-    for comp in complexities:
-        if comp in summary['by_complexity']:
-            s = summary['by_complexity'][comp]
-            print(f"{comp.capitalize():8s} -> MRA: {s['avg_mra']:.3f} ± {s['std_mra']:.3f} ({s['n_dialogues']} dialogues)")
+    print("=== Memory Recall Accuracy (MRA) ===")
+    for comp, s in summary["by_complexity"].items():
+        print(f"{comp.capitalize():8s} -> MRA: {s['MRA']:.3f} ± {s['std']:.3f} ({s['dialogues']} dialogues)")
+    if summary["overall"]:
+        print(f"Overall   -> MRA: {summary['overall']['MRA']:.3f} ({summary['overall']['dialogues']} dialogues)")
 
-    if summary['overall']['total_dialogues'] > 0:
-        o = summary['overall']
-        print(f"Overall   -> MRA: {o['avg_mra']:.3f} ± {o['std_mra']:.3f} ({o['total_dialogues']} dialogues)")
-
-    # Save results
     if args.output:
         out_path = Path(args.output)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(out_path, 'w') as f:
-            json.dump(summary, f, indent=2)
+        out_path.write_text(json.dumps(summary, indent=2))
         print(f"Saved results to {out_path}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

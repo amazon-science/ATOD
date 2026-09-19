@@ -4,187 +4,174 @@
 # SPDX-License-Identifier: CC-BY-NC-4.0
 
 """
-Proactivity Effectiveness - LLM-Judged
+Proactivity Effectiveness (PE) -- LLM-judged.
 
-Evaluates the effectiveness of proactive system actions using LLM-as-a-Judge.
-Measures whether proactive turns are contextually appropriate and advance user goals.
+A system response is flagged as *proactive* when it acts on a goal that is
+present in the tracked goal state but is not referenced in the current user
+turn (e.g. a reminder about a pending booking). For each proactive response the
+judge returns two binary decisions, ``grounded`` (supported by the dialogue and
+memory state) and ``beneficial`` (advances an unresolved goal without
+redundancy). A response receives credit only when both hold:
 
-This metric validates the system's ability to take helpful initiative in task completion.
+    b_t = grounded_t * beneficial_t,      PE = mean_t b_t
 """
 
 import json
 import argparse
-import os
+import re
+import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-import numpy as np
-import sys
 
-# Add parent directory to path for imports
+from statistics import mean, pstdev
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from llm_utils import evaluate_json_with_llm, format_dialogue_context, goal_state_json  # noqa: E402
+
+STOPWORDS = {"a", "an", "the", "to", "for", "of", "in", "on", "at", "and", "or", "my", "me", "i", "you", "please", "with"}
 
 
-def load_dialogues(file_path: Path) -> List[Dict[str, Any]]:
-    """Load dialogues from JSON file."""
-    with open(file_path, 'r') as f:
-        data = json.load(f)
-    return data
+def _content_words(text: str) -> set:
+    return {w for w in re.findall(r"[a-z0-9]+", str(text).lower()) if w not in STOPWORDS and len(w) > 2}
 
 
 def find_proactive_turns(dialogue: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Find proactive system turns that include goal status changes."""
-    turns = dialogue.get('turns', [])
+    """Return system turns that act on a tracked goal not referenced by the current user turn."""
+    turns = dialogue.get("turns", [])
+    goals = {g["id"]: g for g in dialogue.get("goal_list", [])}
     out: List[Dict[str, Any]] = []
-    for idx, t in enumerate(turns):
-        if t.get('speaker') == 'SYSTEM' and t.get('goal_status_changes'):
-            prev_user = ''
-            if idx - 1 >= 0 and turns[idx - 1].get('speaker') == 'USER':
-                prev_user = turns[idx - 1].get('utterance', '')
+    for idx, turn in enumerate(turns):
+        if turn.get("speaker") != "SYSTEM" or not turn.get("goal_status_changes"):
+            continue
+        user_turn = turns[idx - 1] if idx > 0 and turns[idx - 1].get("speaker") == "USER" else {}
+        user_words = _content_words(user_turn.get("utterance", ""))
+        previous_state = turns[idx - 1].get("all_goals", []) if idx > 0 else []
+        tracked_before = {e.get("goal_id") for e in previous_state if e.get("status") not in (None, "not_mentioned")}
+
+        proactive_goals = []
+        for change in turn.get("goal_status_changes", []):
+            gid = change.get("goal_id")
+            if gid not in tracked_before:
+                continue  # newly introduced goals are reactions to the user, not proactivity
+            goal = goals.get(gid, {})
+            goal_words = _content_words(goal.get("core_content", "")) | _content_words(goal.get("content", ""))
+            if goal_words and not (goal_words & user_words):
+                proactive_goals.append(gid)
+        if proactive_goals:
             out.append({
-                'dialogue_id': dialogue.get('dialogue_id', 'unknown'),
-                'turn_index': idx,  # 0-based
-                'user_before': prev_user,
-                'system_utt': t.get('utterance', ''),
-                'status_changes': t.get('goal_status_changes', []),
+                "turn_index": idx,
+                "turn_id": turn.get("turn_id", idx + 1),
+                "system_action": turn.get("utterance", ""),
+                "goal_ids": proactive_goals,
             })
     return out
 
 
-from llm_utils import evaluate_yes_no_with_llm
+def proactivity_prompt(dialogue_context: str, system_action: str, goal_state: str) -> str:
+    return f"""You are evaluating whether a system's proactive action is contextually grounded and genuinely helpful.
+
+Dialogue Context: {dialogue_context}
+Current System Action: {system_action}
+Relevant Goal State: {goal_state}
+
+Judging Criteria:
+- The action is not explicitly requested by the user in the current turn
+- The action is grounded in prior dialogue and memory state
+- The action advances an unresolved or dependency-unlocked goal, or provides a timely reminder
+- The action is not irrelevant, redundant, or distracting
+
+Output format (JSON): {{"grounded": 0 or 1, "beneficial": 0 or 1}}"""
+
+
+def _binary(value: Any) -> int:
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return 1 if value >= 1 else 0
+    return 1 if str(value).strip().lower() in {"1", "true", "yes"} else 0
 
 
 def compute_proactivity_effectiveness(
     dialogue: Dict[str, Any],
     model_id: Optional[str] = None,
     verbose: bool = False,
-) -> float:
-    """Compute proactivity effectiveness using LLM-as-Judge."""
+    context_window: int = 8,
+) -> Optional[float]:
+    """PE for one dialogue; None when the dialogue has no proactive responses."""
     proactive_turns = find_proactive_turns(dialogue)
-
     if not proactive_turns:
-        return 0.0
+        return None
+    turns = dialogue.get("turns", [])
+    credits = []
+    for info in proactive_turns:
+        idx = info["turn_index"]
+        prompt = proactivity_prompt(
+            format_dialogue_context(turns, upto=idx, window=context_window),
+            info["system_action"],
+            goal_state_json(turns[idx - 1] if idx > 0 else {}, set(info["goal_ids"])),
+        )
+        decision = evaluate_json_with_llm(prompt, model_id=model_id, verbose=verbose)
+        credits.append(_binary(decision.get("grounded", 0)) * _binary(decision.get("beneficial", 0)))
+    return mean(credits)
 
-    effective_count = 0
 
-    for turn_info in proactive_turns:
-        user_before = turn_info.get('user_before', '')
-        system_utt = turn_info.get('system_utt', '')
-        status_changes = turn_info.get('status_changes', [])
-
-        # Create LLM judge prompt for proactivity effectiveness
-        prompt = f"""Evaluate this system's proactive action:
-
-User said: "{user_before}"
-System responded: "{system_utt}"
-Goal changes: {status_changes}
-
-Is this system response helpful and appropriate?
-- Does it advance the user's goals?
-- Is it timely and relevant?
-
-Answer with only: YES or NO"""
-
-        # Get LLM judgment
-        is_effective = evaluate_yes_no_with_llm(prompt, model_id=model_id, verbose=verbose)
-        if is_effective:
-            effective_count += 1
-
-    return effective_count / len(proactive_turns)
+def load_dialogues(file_path: Path) -> List[Dict[str, Any]]:
+    with open(file_path, "r") as f:
+        return json.load(f)
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Compute Proactivity Effectiveness from A-TOD annotated dialogues')
-    parser.add_argument('--complexity', choices=['medium', 'complex', 'all'], default='all')
-    parser.add_argument('--base-dir', default=None, help='Base directory containing ATOD data')
-    parser.add_argument('--sample-size', type=int, default=None, help='Limit to first N dialogues per complexity')
-    parser.add_argument(
-        '--model-id',
-        default=os.environ.get("ATOD_MODEL_ID"),
-        help='Bedrock model ID. Defaults to ATOD_MODEL_ID.',
-    )
-    parser.add_argument('--verbose', action='store_true', help='Show detailed debug output including LLM responses')
-    parser.add_argument('--output', default=None, help='Optional JSON output path')
+    parser = argparse.ArgumentParser(description="Compute Proactivity Effectiveness (PE) with an LLM judge")
+    parser.add_argument("--complexity", choices=["medium", "complex", "all"], default="all")
+    parser.add_argument("--base-dir", default=None, help="Directory containing medium/ and complex/")
+    parser.add_argument("--sample-size", type=int, default=None, help="Limit to first N dialogues per complexity")
+    parser.add_argument("--model-id", default=None, help="Judge model ID (defaults to ATOD_MODEL_ID)")
+    parser.add_argument("--verbose", action="store_true")
+    parser.add_argument("--output", default=None, help="Optional JSON output path")
     args = parser.parse_args()
-    if not args.model_id:
-        parser.error("provide --model-id or set ATOD_MODEL_ID")
 
-    base_dir = Path(args.base_dir) if args.base_dir else (Path(__file__).resolve().parents[1] / 'data')
-    complexities = ['medium', 'complex'] if args.complexity == 'all' else [args.complexity]
+    base_dir = Path(args.base_dir) if args.base_dir else (Path(__file__).resolve().parents[1] / "data")
+    complexities = ["medium", "complex"] if args.complexity == "all" else [args.complexity]
 
-    summary = {
-        'by_complexity': {},
-        'overall': {'total_dialogues': 0, 'avg_effectiveness': 0.0},
-        'base_dir': str(base_dir)
-    }
-
-    all_scores = []
-
+    summary: Dict[str, Any] = {"by_complexity": {}, "overall": {}}
+    all_scores: List[float] = []
     for comp in complexities:
-        file_path = base_dir / comp / 'annotated_dialogues.json'
+        file_path = base_dir / comp / "annotated_dialogues.json"
         if not file_path.exists():
             print(f"Warning: {file_path} not found, skipping {comp}")
             continue
-
         dialogues = load_dialogues(file_path)
-
-        # Apply sampling if specified
-        if args.sample_size and args.sample_size > 0:
-            dialogues = dialogues[:args.sample_size]
-            print(f"Sampling first {len(dialogues)} {comp} dialogues")
-        else:
-            print(f"Processing all {len(dialogues)} {comp} dialogues")
-
-        comp_scores = []
-        total_proactive_turns = 0
-
+        if args.sample_size:
+            dialogues = dialogues[: args.sample_size]
+        scores, proactive_total = [], 0
         for dialogue in dialogues:
-            try:
-                proactive_turns = find_proactive_turns(dialogue)
-                total_proactive_turns += len(proactive_turns)
-
-                score = compute_proactivity_effectiveness(dialogue, model_id=args.model_id, verbose=args.verbose)
-                comp_scores.append(score)
-                all_scores.append(score)
-            except Exception as e:
-                print(f"Error processing dialogue {dialogue.get('dialogue_id', 'unknown')}: {e}")
-                continue
-
-        if comp_scores:
-            summary['by_complexity'][comp] = {
-                'avg_effectiveness': np.mean(comp_scores),
-                'std_effectiveness': np.std(comp_scores),
-                'n_dialogues': len(comp_scores),
-                'total_proactive_turns': total_proactive_turns
+            proactive_total += len(find_proactive_turns(dialogue))
+            score = compute_proactivity_effectiveness(dialogue, model_id=args.model_id, verbose=args.verbose)
+            if score is not None:
+                scores.append(score)
+        if scores:
+            summary["by_complexity"][comp] = {
+                "PE": mean(scores),
+                "std": pstdev(scores),
+                "dialogues_with_proactive_turns": len(scores),
+                "proactive_turns": proactive_total,
             }
-
-    # Overall summary
+            all_scores.extend(scores)
     if all_scores:
-        summary['overall'] = {
-            'avg_effectiveness': np.mean(all_scores),
-            'std_effectiveness': np.std(all_scores),
-            'total_dialogues': len(all_scores)
-        }
+        summary["overall"] = {"PE": mean(all_scores), "std": pstdev(all_scores), "dialogues": len(all_scores)}
 
-    # Print results
-    print('=== Proactivity Effectiveness (LLM-Judged) ===')
-    for comp in complexities:
-        if comp in summary['by_complexity']:
-            s = summary['by_complexity'][comp]
-            print(f"{comp.capitalize():8s} -> Effectiveness: {s['avg_effectiveness']:.3f} ± {s['std_effectiveness']:.3f} "
-                  f"({s['n_dialogues']} dialogues, {s['total_proactive_turns']} proactive turns)")
+    print("=== Proactivity Effectiveness (PE) ===")
+    for comp, s in summary["by_complexity"].items():
+        print(f"{comp.capitalize():8s} -> PE: {s['PE']:.3f} ± {s['std']:.3f} ({s['dialogues_with_proactive_turns']} dialogues, {s['proactive_turns']} proactive turns)")
+    if summary["overall"]:
+        print(f"Overall   -> PE: {summary['overall']['PE']:.3f} ({summary['overall']['dialogues']} dialogues)")
 
-    if summary['overall']['total_dialogues'] > 0:
-        o = summary['overall']
-        print(f"Overall   -> Effectiveness: {o['avg_effectiveness']:.3f} ± {o['std_effectiveness']:.3f} ({o['total_dialogues']} dialogues)")
-
-    # Save results
     if args.output:
         out_path = Path(args.output)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(out_path, 'w') as f:
-            json.dump(summary, f, indent=2)
+        out_path.write_text(json.dumps(summary, indent=2))
         print(f"Saved results to {out_path}")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -87,6 +87,15 @@ Offline tests (no model access needed):
 python -m unittest discover -s tests
 ```
 
+## Metric scripts
+
+`ATODEval/` implements the ATOD-Eval metrics defined in the paper: dGCR and NTC over decided goals (`dgcr.py`, `ntc.py`, no model calls), dependency-edge precision/recall/F1 (`dependency.py`), and the LLM-judged metrics with the prompt templates from the paper appendix: memory recall accuracy (`memory_recall_accuracy.py`, requires the evaluated system's per-turn goal states via `--predictions-dir`), proactivity effectiveness (`proactivity_effectiveness.py`, grounded × beneficial), turn-level relevance (`turn_level_quality.py`, score / 5) and dialogue-level coherence (`dialogue_level_quality.py`, native 1–5 scale).
+
+```bash
+python ATODEval/dgcr.py --complexity all
+python ATODEval/proactivity_effectiveness.py --complexity medium --sample-size 5
+```
+
 ## Reproducibility status
 
 This code is being released solely for academic and scientific reproducibility purposes, in support of the methods and findings described in the associated publication. Pull requests are not being accepted in order to maintain the code exactly as it was used in the paper.
