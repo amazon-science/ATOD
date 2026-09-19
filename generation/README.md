@@ -31,11 +31,15 @@ Stage details:
    produces the goal sequence. Complexity is *not* assigned here.
 4. **Trajectory annotation.** For each goal the model proposes slots, realistic
    slot values, `content` and `core_content`. The turn estimate is set to three
-   turns per goal, the complexity label is assigned by the rule-based scorer
-   (goal count, domain count, turn estimate, dependency count; a model-based
-   classifier is the fallback when the scorer yields no label), agentic flags
-   are set from the label, and inter-goal dependencies are proposed by the model
-   for trajectories with more than three goals. Annotations with placeholder
+   turns per goal, and the complexity label is assigned by the hybrid
+   classification: a rule-based score over goal count, domain count, turn
+   estimate and dependency count labels clear cases (`medium` for no complex
+   indicators, `complex` for strong or combined indicators), and a model-based
+   classifier resolves trajectories in the overlapping range of the criteria
+   (e.g. 7–8 goals, exactly two dependencies, three domains). `classification_method`
+   records which branch decided. Agentic flags are set from the label, and
+   inter-goal dependencies are proposed by the model for trajectories with more
+   than three goals. Annotations with placeholder
    values are rejected; with verifiers enabled a PASS/FAIL trajectory judge is
    applied as well.
 5. **Dialogue generation.** The annotated trajectory is rendered into the

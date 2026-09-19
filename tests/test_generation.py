@@ -17,6 +17,7 @@ from generation.annotate_dialogue_status import (
 )
 from generation.annotate_trajectories import (
     apply_dependencies,
+    complexity_score,
     parse_dependency_response,
     parse_slot_response,
     refine_turn_estimate,
@@ -141,7 +142,14 @@ class TrajectoryAnnotationTests(unittest.TestCase):
 
         large = {"goal_list": [{"domain": f"D{i}", "intent": "x", "dependencies": []} for i in range(9)], "metadata": {}}
         refine_turn_estimate(large)
+        self.assertGreaterEqual(complexity_score(large), 3)
         self.assertEqual(rule_based_complexity(large), "complex")
+
+        # overlapping range (7 goals, two domains, no dependencies) -> model-based branch
+        overlap = {"goal_list": [{"domain": "A" if i % 2 else "B", "intent": f"x{i}", "dependencies": []} for i in range(7)], "metadata": {}}
+        refine_turn_estimate(overlap)
+        self.assertEqual(complexity_score(overlap), 2)
+        self.assertIsNone(rule_based_complexity(overlap))
 
         set_agentic_flags(small, "medium")
         self.assertFalse(small["metadata"]["proactivity"])
@@ -216,6 +224,7 @@ class _StubClient:
 
     def __init__(self):
         self.calls = 0
+        self.model_classifications = 0
 
     def call(self, prompt, max_tokens=None, temperature=None, **_kwargs):
         self.calls += 1
@@ -224,6 +233,9 @@ class _StubClient:
                                "content": "Book something in Boston on March 15, 2025", "core_content": "book item"})
         if prompt.startswith("Analyze these goals and determine logical dependencies"):
             return json.dumps({"dependencies": [{"goal": 2, "depends_on": [1]}]})
+        if prompt.startswith("Classify this goal trajectory complexity"):
+            self.model_classifications += 1
+            return "COMPLEX"
         if "Respond with exactly one word: PASS or FAIL" in prompt:
             return "PASS"
         if prompt.startswith("Generate a realistic task-oriented dialogue"):
@@ -262,13 +274,16 @@ class EndToEndStubTests(unittest.TestCase):
         self.assertEqual(len(annotated), 4)
         for trajectory in annotated:
             self.assertIn(trajectory["complexity_class"], {"medium", "complex"})
-            self.assertEqual(trajectory["classification_method"], "pre_defined")
+            self.assertIn(trajectory["classification_method"], {"pre_defined", "model_based"})
+            if trajectory["classification_method"] == "model_based":
+                self.assertEqual(trajectory["complexity_class"], "complex")
             self.assertEqual(trajectory["metadata"]["estimated_turns"], 3 * len(trajectory["goal_list"]))
             for goal in trajectory["goal_list"]:
                 self.assertEqual(goal["slot_values"]["city"], "Boston")
                 self.assertTrue(goal["content"] and goal["core_content"])
             if len(trajectory["goal_list"]) > 3:
                 self.assertEqual(trajectory["goal_list"][1]["dependencies"], ["goal_1"])
+        self.assertEqual(client.model_classifications, sum(t["classification_method"] == "model_based" for t in annotated))
 
         dialogues = DialogueGenerator(client, enable_judge=True).run(annotated, workers=1, max_rounds=1, quality_threshold=0.8)
         self.assertEqual(len(dialogues), 4)

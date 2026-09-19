@@ -9,9 +9,10 @@ For every trajectory the pipeline
 1. asks the model for slots, realistic slot values and a goal description
    for each ``(domain, intent)`` goal;
 2. refines the turn estimate;
-3. assigns the complexity label (``medium`` / ``complex``) with the rule-based
-   scorer, falling back to a model-based classifier when the rules return no
-   label, and sets the agentic attribute flags;
+3. assigns the complexity label (``medium`` / ``complex``) with a hybrid
+   procedure: pre-defined rules label the clear cases and a model-based
+   classifier resolves trajectories in the overlapping range of the criteria;
+   then sets the agentic attribute flags;
 4. asks the model for inter-goal dependencies (trajectories with > 3 goals);
 5. validates the annotation (no placeholder values) and, unless
    ``--disable-judge`` is given, runs the trajectory verifier prompt.
@@ -246,12 +247,15 @@ def refine_turn_estimate(trajectory: dict) -> None:
     trajectory.setdefault("metadata", {})["estimated_turns"] = int(num_goals * 3.0)
 
 
-def rule_based_complexity(trajectory: dict) -> Optional[str]:
-    """Score quantitative attributes; returns ``"complex"`` or ``"medium"``.
+# Rule-based score boundaries. Scores in the open interval are the overlapping
+# region of the complexity criteria (e.g. 7-8 goals, exactly two dependencies,
+# three domains) and are resolved by the model-based classifier.
+CLEAR_MEDIUM_MAX_SCORE = 0
+CLEAR_COMPLEX_MIN_SCORE = 3
 
-    Note: the scorer always yields a label, so the model-based classifier in
-    :func:`TrajectoryAnnotator.classify` acts only as a safeguard.
-    """
+
+def complexity_score(trajectory: dict) -> int:
+    """Quantitative complexity score from goal, domain, turn and dependency counts."""
     goals = trajectory.get("goal_list", [])
     metadata = trajectory.get("metadata", {})
     num_goals = len(goals)
@@ -280,7 +284,23 @@ def rule_based_complexity(trajectory: dict) -> Optional[str]:
         score += 3
     elif total_deps >= t_complex["min_dependencies"]:
         score += 2
-    return "complex" if score >= 2 else "medium"
+    return score
+
+
+def rule_based_complexity(trajectory: dict) -> Optional[str]:
+    """Pre-defined rules: return a label for clear cases, None for the overlap region.
+
+    Trajectories with no complex indicators are ``medium``; trajectories with a
+    high score (many goals, many dependencies, or several combined indicators)
+    are ``complex``. Intermediate scores fall into the overlapping ranges of the
+    criteria table and are left to the model-based classifier.
+    """
+    score = complexity_score(trajectory)
+    if score <= CLEAR_MEDIUM_MAX_SCORE:
+        return "medium"
+    if score >= CLEAR_COMPLEX_MIN_SCORE:
+        return "complex"
+    return None
 
 
 def set_agentic_flags(trajectory: dict, complexity: str) -> None:
