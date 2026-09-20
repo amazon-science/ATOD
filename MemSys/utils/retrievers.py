@@ -7,7 +7,7 @@ import re
 import warnings
 from sentence_transformers import SentenceTransformer
 import numpy as np
-import pickle
+import json
 import os
 import faiss
 
@@ -74,7 +74,7 @@ class FaissRetriever:
 
         # File paths for persistence
         self.index_path = f"{collection_name}_faiss.index"
-        self.metadata_path = f"{collection_name}_metadata.pkl"
+        self.metadata_path = f"{collection_name}_metadata.json"
 
         # Load existing data if available
         self._load_data()
@@ -97,8 +97,8 @@ class FaissRetriever:
                 # Load FAISS index
                 self.index = faiss.read_index(self.index_path)
                 # Load metadata
-                with open(self.metadata_path, 'rb') as f:
-                    data = pickle.load(f)
+                with open(self.metadata_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
                     self.documents = data['documents']
                     self.metadatas = data['metadatas']
                     self.doc_ids = data['doc_ids']
@@ -121,8 +121,8 @@ class FaissRetriever:
                 'metadatas': self.metadatas,
                 'doc_ids': self.doc_ids
             }
-            with open(self.metadata_path, 'wb') as f:
-                pickle.dump(data, f)
+            with open(self.metadata_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False)
         except Exception as e:
             print(f"Could not save data: {e}")
 

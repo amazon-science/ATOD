@@ -13,6 +13,7 @@ generation/work/
 *.faiss
 *_faiss.index
 *_metadata.pkl
+*_metadata.json
 
 # Local credentials and environment files
 .env
