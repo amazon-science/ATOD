@@ -6,6 +6,8 @@ ATOD is a benchmark and evaluation framework for agentic task-oriented dialogue 
 
 The repository contains the fixed 1,000-dialogue ATOD benchmark, the pipeline that generated it, and the code required to run ATOD-Eval.
 
+[Paper](https://arxiv.org/abs/2601.11854) · [Hugging Face dataset](https://huggingface.co/datasets/jimmyzhangyf/ATOD) · [Dataset card](DATASET_CARD.md)
+
 ## Repository contents
 
 ```text
@@ -31,6 +33,24 @@ The release contains:
 | Total | 1,000 |
 
 Each file is a compact JSON array. Every dialogue contains a stable ID, a complexity label, a goal graph, dialogue turns, goal-status transitions, and complexity metadata. See [data/README.md](data/README.md) and [DATASET_CARD.md](DATASET_CARD.md).
+
+### Load from Hugging Face
+
+The benchmark is also available as an [author-maintained Hugging Face distribution](https://huggingface.co/datasets/jimmyzhangyf/ATOD), with a dataset viewer and detailed dataset card. Its raw JSON files preserve the published benchmark data and the original CC BY-NC 4.0 license.
+
+```bash
+pip install datasets
+```
+
+```python
+from datasets import load_dataset
+
+atod = load_dataset("jimmyzhangyf/ATOD")
+medium = atod["medium"]    # 428 dialogues
+complex = atod["complex"]  # 572 dialogues
+```
+
+These are complexity partitions, not training/validation/test splits. Each row is a complete dialogue. The original generation and evaluation code is maintained in this GitHub repository.
 
 Validate the release before use:
 

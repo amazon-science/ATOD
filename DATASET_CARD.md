@@ -1,5 +1,7 @@
 # Dataset Card for ATOD
 
+Browse the [Hugging Face dataset and extended dataset card](https://huggingface.co/datasets/jimmyzhangyf/ATOD) for an online viewer, loading examples, and file provenance. This author-maintained distribution preserves the original benchmark data and license.
+
 ## Dataset summary
 
 ATOD is a synthetic benchmark for evaluating task-oriented dialogue systems under multi-goal, long-horizon, asynchronous, interleaved, dependency-aware, and proactive interactions. It contains 1,000 dialogues divided into 428 medium-complexity and 572 complex dialogues.
