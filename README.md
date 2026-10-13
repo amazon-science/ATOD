@@ -1,12 +1,13 @@
 # ATOD
 
+[![arXiv](https://img.shields.io/badge/arXiv-2601.11854-B31B1B?logo=arxiv&logoColor=white)](https://arxiv.org/abs/2601.11854)
+[![Hugging Face Dataset](https://img.shields.io/badge/Hugging%20Face-Dataset-FFD21E?logo=huggingface&logoColor=FFD21E)](https://huggingface.co/datasets/jimmyzhangyf/ATOD)
+
 ATOD is a benchmark and evaluation framework for agentic task-oriented dialogue systems. It accompanies the AACL 2026 paper:
 
 > [**ATOD: An Evaluation Framework and Benchmark for Agentic Task-Oriented Dialogue Systems**](https://arxiv.org/abs/2601.11854)
 
 The repository contains the fixed 1,000-dialogue ATOD benchmark, the pipeline that generated it, and the code required to run ATOD-Eval.
-
-[Paper](https://arxiv.org/abs/2601.11854) · [Hugging Face dataset](https://huggingface.co/datasets/jimmyzhangyf/ATOD) · [Dataset card](DATASET_CARD.md)
 
 ## Repository contents
 
