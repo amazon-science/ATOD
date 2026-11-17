@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # CPU-only torch keeps the install small; requirements.txt then
+          # resolves the remaining dependencies against it.
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -r requirements.txt
+
+      - name: Import and dependency smoke test
+        run: |
+          python - <<'EOF'
+          import numpy as np
+          import faiss, torch, boto3, botocore, sentence_transformers, tqdm
+          import MemSys.memory_system
+          import MemSys.utils.retrievers
+          import MemSys.utils.llm_controller
+          import generation.common
+          import ATODEval.dependency
+
+          x = np.random.rand(8, 4).astype("float32")
+          index = faiss.IndexFlatL2(4)
+          index.add(x)
+          assert index.search(x[:1], 1)[1][0][0] == 0
+          print("torch", torch.__version__, "| faiss", faiss.__version__,
+                "| sentence-transformers", sentence_transformers.__version__,
+                "| boto3", boto3.__version__)
+          EOF
+          python evaluation/evaluation_atod.py --help > /dev/null
+
+      - name: Validate released data
+        run: python scripts/validate_data.py
+
+      - name: Offline unit tests
+        run: python -m unittest discover -s tests
